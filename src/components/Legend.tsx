@@ -5,8 +5,8 @@ import { useMemo, useState } from 'react'
 export function Legend() {
   const minMag = useUIStore((s) => s.minMagnitude)
   const setMin = useUIStore((s) => s.setMinMagnitude)
-  const ditherScale = useUIStore((s) => s.ditherScale)
-  const setDitherScale = useUIStore((s) => s.setDitherScale)
+  // Dither controls removed
+  const theme = useUIStore((s) => s.theme)
   const setFocusTarget = useUIStore((s) => s.setFocusTarget)
   const { data } = useEarthquakes()
   const [query, setQuery] = useState('')
@@ -74,29 +74,20 @@ export function Legend() {
           <div className="mt-1 text-xs opacity-80">Showing M ≥ {minMag.toFixed(1)}</div>
         </section>
 
-        <section>
-          <h2 className="mb-2 text-sm font-medium">Dither strength</h2>
-          <input
-            type="range"
-            min={0.6}
-            max={3}
-            step={0.1}
-            value={ditherScale}
-            onChange={(e) => setDitherScale(parseFloat(e.target.value))}
-            className="w-full"
-            aria-label="Dither strength"
-          />
-          <div className="mt-1 text-xs opacity-80">Scale: {ditherScale.toFixed(1)}</div>
-        </section>
+        {/* Dither controls removed per design simplification */}
 
         <section>
           <h2 className="mb-2 text-sm font-medium">Depth (km)</h2>
           <div className="mt-1 flex items-center gap-2">
-            <span className="h-3 w-3 rounded-full" style={{ background: 'hsl(200 100% 50%)' }} />
+            <span className="h-3 w-3 rounded-full ring-2 ring-black/70 dark:ring-white/80 dark:bg-[#00d5ff] bg-[#2c7fb8]" />
             <span className="text-xs">Shallow</span>
-            <div className="h-1 flex-1 bg-gradient-to-r from-[hsl(200_100%_50%)] via-[hsl(40_100%_50%)] to-[hsl(0_100%_50%)]" />
+            <div className="h-2 flex-1 rounded-sm ring-1 ring-black/50 dark:ring-white/60" style={{
+              background: theme === 'dark'
+                ? 'linear-gradient(90deg, #0d8094, #00ff9d, #ffe600, #ff5c39)'
+                : 'linear-gradient(90deg, #2c7fb8, #1a9850, #fdae61, #d73027)'
+            }} />
             <span className="text-xs">Deep</span>
-            <span className="h-3 w-3 rounded-full" style={{ background: 'hsl(0 100% 50%)' }} />
+            <span className="h-3 w-3 rounded-full ring-2 ring-black/70 dark:ring-white/80 dark:bg-[#ff5c39] bg-[#d73027]" />
           </div>
         </section>
       </div>

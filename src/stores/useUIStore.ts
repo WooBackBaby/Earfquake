@@ -20,7 +20,7 @@ interface UIState {
 export const useUIStore = create<UIState>((set) => ({
   theme: 'dark',
   minMagnitude: 2.5,
-  ditherScale: 2,
+  ditherScale: 1, // kept for shader param but UI removed
   focusTarget: null,
   muted: true,
   setTheme: (theme) => {

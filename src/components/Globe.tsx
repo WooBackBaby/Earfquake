@@ -1,7 +1,6 @@
-import { Canvas, type ThreeElements, useThree } from '@react-three/fiber'
+import { Canvas, type ThreeElements, useThree, useFrame } from '@react-three/fiber'
 import { OrbitControls, Stars, useTexture } from '@react-three/drei'
-import { EffectComposer, Noise, Vignette, DotScreen } from '@react-three/postprocessing'
-import { BlendFunction } from 'postprocessing'
+import { EffectComposer, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useEarthquakes } from '../hooks/useEarthquakes'
@@ -17,55 +16,95 @@ function latLngToVector3(lat: number, lng: number, radius: number) {
   return new THREE.Vector3(x, y, z)
 }
 
-function depthToColor(depthKm: number) {
-  // 0km -> blue, 300km -> red via yellow
+function depthToColor(depthKm: number, theme: 'light' | 'dark') {
+  // Theme-aware, high-contrast, colorblind-friendly ramps
+  // Dark: bright cyan → lime → yellow → orange
+  // Light: strong blue → green → orange → red
   const t = Math.min(1, Math.max(0, depthKm / 300))
-  const color = new THREE.Color()
-  // interpolate blue->yellow->red
-  if (t < 0.5) {
-    color.setHSL(0.55 - t * 0.55 * 2, 1, 0.5) // blue to yellow
-  } else {
-    const tt = (t - 0.5) * 2
-    color.setHSL(0.1 * (1 - tt), 1, 0.5) // yellow to red
-  }
-  return color
+  const darkStops = [
+    new THREE.Color('#0d8094'),
+    new THREE.Color('#00ff9d'),
+    new THREE.Color('#ffe600'),
+    new THREE.Color('#ff5c39'),
+  ]
+  const lightStops = [
+    new THREE.Color('#1d4ed8'), // blue-700
+    new THREE.Color('#16a34a'), // green-600
+    new THREE.Color('#f59e0b'), // amber-500
+    new THREE.Color('#dc2626'), // red-600
+  ]
+  const stops = theme === 'dark' ? darkStops : lightStops
+  const p = t * (stops.length - 1)
+  const i = Math.floor(p)
+  const f = p - i
+  if (i >= stops.length - 1) return stops[stops.length - 1].clone()
+  return stops[i].clone().lerp(stops[i + 1], f)
 }
 
-type TooltipData = { mag: number; place: string; time: number; depth: number }
+type TooltipData = { mag: number; place: string; time: number; depth: number; lat: number; lng: number }
 
 function Markers({
   setTooltip,
   pinned,
   setPinned,
+  minDist,
+  maxDist,
 }: {
   setTooltip: React.Dispatch<
     React.SetStateAction<{ visible: boolean; x: number; y: number; content: TooltipData | null }>
   >
   pinned: boolean
   setPinned: React.Dispatch<React.SetStateAction<boolean>>
+  minDist: number
+  maxDist: number
 }) {
   const { data } = useEarthquakes()
   const minMag = useUIStore((s) => s.minMagnitude)
+  const theme = useUIStore((s) => s.theme)
+  const setFocusTarget = useUIStore((s) => s.setFocusTarget)
   const groupRef = useRef<THREE.Group>(null)
   const { camera, gl } = useThree()
+  
+  // Dynamically scale each marker mesh based on camera distance.
+  // Scaling the group would move markers off the surface; per-mesh scaling preserves positions.
+  useFrame(() => {
+    const grp = groupRef.current
+    if (!grp) return
+    const distanceToOrigin = camera.position.length()
+    const scale = THREE.MathUtils.clamp(
+      THREE.MathUtils.mapLinear(distanceToOrigin, minDist, maxDist, 0.75, 2.0),
+      0.9,
+      2.2,
+    )
+    for (const obj of grp.children) {
+      obj.scale.setScalar(scale)
+      // Hide halos when markers exceed ~12px on screen to avoid banding
+      const halosVisible = distanceToOrigin > (minDist + 0.45)
+      for (const child of obj.children) {
+        child.visible = halosVisible
+      }
+    }
+  })
 
   const points = useMemo(() => {
-    if (!data) return [] as Array<{ position: THREE.Vector3; color: THREE.Color; mag: number; place: string; time: number; depth: number }>
+    if (!data) return [] as Array<{ position: THREE.Vector3; color: THREE.Color; mag: number; place: string; time: number; depth: number; lat: number; lng: number }>
     return data.features
       .filter((f) => (f.properties.mag ?? 0) >= minMag)
       .map((f) => {
         const [lng, lat, depth] = f.geometry.coordinates
         const mag = f.properties.mag ?? 0
-        return {
-          position: latLngToVector3(lat, lng, 1.02),
-          color: depthToColor(depth),
-          mag,
-          place: f.properties.place,
-          time: f.properties.time,
-          depth,
-        }
+          return {
+            position: latLngToVector3(lat, lng, 1.02),
+            color: depthToColor(depth, theme),
+            mag,
+            place: f.properties.place,
+            time: f.properties.time,
+            depth,
+            lat,
+            lng,
+          }
       })
-  }, [data, minMag])
+  }, [data, minMag, theme])
 
   const raycaster = useMemo(() => new THREE.Raycaster(), [])
   const mouse = useMemo(() => new THREE.Vector2(), [])
@@ -86,14 +125,16 @@ function Markers({
   function onPointerMove(e: any) {
     if (pinned) return
     const d = (e.object?.userData ?? null) as TooltipData | null
-    if (d) setTooltip({ visible: true, x: e.clientX, y: e.clientY, content: { mag: d.mag, place: d.place, time: d.time, depth: d.depth } })
+    if (d) setTooltip({ visible: true, x: e.clientX, y: e.clientY, content: { mag: d.mag, place: d.place, time: d.time, depth: d.depth, lat: d.lat, lng: d.lng } })
   }
 
   function onPointerDown(e: any) {
     const d = (e.object?.userData ?? hitTest(e)) as TooltipData | null
     if (d) {
       setPinned(true)
-      setTooltip({ visible: true, x: e.clientX, y: e.clientY, content: { mag: d.mag, place: d.place, time: d.time, depth: d.depth } })
+      setTooltip({ visible: true, x: e.clientX, y: e.clientY, content: { mag: d.mag, place: d.place, time: d.time, depth: d.depth, lat: d.lat, lng: d.lng } })
+      // Center the view on the selected earthquake
+      setFocusTarget(d.lat, d.lng)
     } else {
       setPinned(false)
       setTooltip((t) => ({ ...t, visible: false }))
@@ -119,7 +160,7 @@ function Markers({
           <mesh
             key={idx}
             position={p.position}
-            userData={{ mag: p.mag, place: p.place, time: p.time, depth: p.depth }}
+            userData={{ mag: p.mag, place: p.place, time: p.time, depth: p.depth, lat: p.lat, lng: p.lng }}
             onPointerMove={onPointerMove}
             onPointerDown={onPointerDown}
             onPointerOver={() => (document.body.style.cursor = 'pointer')}
@@ -127,9 +168,38 @@ function Markers({
               document.body.style.cursor = 'default'
               if (!pinned) setTooltip((t) => ({ ...t, visible: false }))
             }}
+            frustumCulled={false}
           >
-            <sphereGeometry args={[0.001 + p.mag * 0.0015, 8, 8]} />
-            <meshBasicMaterial color={p.color} dithering />
+            {(() => {
+              const baseRadius = 0.0008 + Math.pow(Math.max(0, p.mag), 0.9) * 0.0012
+              return (
+                <>
+                  <sphereGeometry args={[baseRadius, 12, 12]} />
+                  <meshBasicMaterial color={p.color} dithering={false} />
+                  {/* dual halos to ensure WCAG non-text contrast against any background (auto-hidden when zoomed in) */}
+                  {/* dark stroke */}
+                   <mesh name="halo" scale={1.45} raycast={() => null}>
+                    <sphereGeometry args={[baseRadius, 10, 10]} />
+                    <meshBasicMaterial color={new THREE.Color('#000000')}
+                                       transparent
+                                        opacity={0.34}
+                                       depthWrite={false}
+                                       depthTest
+                                       blending={THREE.NormalBlending} />
+                  </mesh>
+                  {/* light glow */}
+                   <mesh name="halo2" scale={1.25} raycast={() => null}>
+                    <sphereGeometry args={[baseRadius, 10, 10]} />
+                    <meshBasicMaterial color={new THREE.Color('#ffffff')}
+                                       transparent
+                                        opacity={0.28}
+                                       depthWrite={false}
+                                       depthTest
+                                       blending={THREE.AdditiveBlending} />
+                  </mesh>
+                </>
+              )
+            })()}
           </mesh>
         ))}
       </group>
@@ -138,7 +208,7 @@ function Markers({
   )
 }
 
-function Earth({ theme, ...props }: ThreeElements['mesh'] & { theme: 'light' | 'dark' }) {
+function Earth({ theme, ditherScale, ...props }: ThreeElements['mesh'] & { theme: 'light' | 'dark'; ditherScale: number }) {
   const ref = useRef<THREE.Mesh>(null)
   const [albedo, spec] = useTexture(['/textures/earth.jpg', '/textures/earth_spec.jpg'])
 
@@ -158,6 +228,8 @@ function Earth({ theme, ...props }: ThreeElements['mesh'] & { theme: 'light' | '
     uniform vec3 uOceanColor;
     uniform float uThreshold;
     uniform float uFeather;
+    uniform float uDitherScale; // visual scale
+    uniform float uDarkMode;    // 1.0 for dark theme, 0.0 for light
     void main() {
       vec3 tex = texture2D(uAlbedo, vUv).rgb;
       // Ocean is bright in specular map; invert to get land mask
@@ -168,13 +240,21 @@ function Earth({ theme, ...props }: ThreeElements['mesh'] & { theme: 'light' | '
       float base = max(landMask, step(uThreshold, luma));
       float mask = smoothstep(0.5 - uFeather, 0.5 + uFeather, base);
       vec3 col = mix(uOceanColor, uLandColor, mask);
+      // Screen-space dot pattern applied only to the Earth (not markers)
+      vec2 p = gl_FragCoord.xy / (5.5 / max(0.1, uDitherScale));
+      vec2 f = fract(p) - 0.5;
+      float dotMask = step(length(f), 0.30);
+      float strength = 0.08 * clamp(uDitherScale, 0.6, 3.0);
+      vec3 screenMix = 1.0 - (1.0 - col) * (1.0 - strength * dotMask);
+      vec3 multiplyMix = col * (1.0 - strength * dotMask);
+      col = mix(multiplyMix, screenMix, uDarkMode);
       gl_FragColor = vec4(col, 1.0);
     }
   `
 
   const uniforms = useMemo(() => {
-    const land = new THREE.Color(theme === 'dark' ? '#A7B3C6' : '#334155')
-    const ocean = new THREE.Color(theme === 'dark' ? '#0B1220' : '#E6EEF7')
+    const land = new THREE.Color(theme === 'dark' ? '#A7B3C6' : '#1f2937') // slate-800
+    const ocean = new THREE.Color(theme === 'dark' ? '#0B1220' : '#cbd5e1') // slate-300
     return {
       uAlbedo: { value: albedo },
       uSpec: { value: spec },
@@ -182,8 +262,10 @@ function Earth({ theme, ...props }: ThreeElements['mesh'] & { theme: 'light' | '
       uOceanColor: { value: ocean },
       uThreshold: { value: 0.35 },
       uFeather: { value: 0.2 },
+      uDitherScale: { value: ditherScale },
+      uDarkMode: { value: theme === 'dark' ? 1.0 : 0.0 },
     }
-  }, [albedo, spec, theme])
+  }, [albedo, spec, theme, ditherScale])
 
   return (
     <mesh ref={ref} {...(props as any)}>
@@ -207,15 +289,22 @@ export function Globe() {
   const clearFocusTarget = useUIStore((s) => s.clearFocusTarget)
   const controlsRef = useRef<any>(null)
   const [azimuthDeg, setAzimuthDeg] = useState(0)
+  // Restore zoom UI slider
+  const [zoom, setZoom] = useState(3.5)
+  const minDist = 1.15
+  const maxDist = 6
+  // Slider normalization so RIGHT = zoom in, LEFT = zoom out
+  const toSlider = (dist: number) => (maxDist - dist) / (maxDist - minDist)
+  const fromSlider = (t: number) => maxDist - t * (maxDist - minDist)
 
   return (
     <div className="relative h-[60vh] w-screen md:h-full md:w-full">
-      <Canvas camera={{ position: [0.8, 0.3, 2.8] }}>
+      <Canvas camera={{ position: [0.8, 0.3, 3.5] }}>
         <ambientLight intensity={0.6} />
         <directionalLight position={[2, 2, 2]} intensity={0.5} />
         <Stars radius={100} depth={50} count={1500} factor={3} fade speed={1} />
-        <Earth theme={theme} />
-        <Markers setTooltip={setTooltip} pinned={pinned} setPinned={setPinned} />
+        <Earth theme={theme} ditherScale={ditherScale} />
+        <Markers setTooltip={setTooltip} pinned={pinned} setPinned={setPinned} minDist={minDist} maxDist={maxDist} />
         <OrbitControls
           ref={controlsRef}
           enablePan
@@ -225,22 +314,19 @@ export function Globe() {
           rotateSpeed={0.5}
           enableDamping
           dampingFactor={0.08}
-          minDistance={1.3}
-          maxDistance={6}
-          onChange={() => {
+            minDistance={minDist}
+          maxDistance={maxDist}
+           onChange={() => {
             const ctl = controlsRef.current
             if (!ctl) return
             const deg = THREE.MathUtils.radToDeg(ctl.getAzimuthalAngle() ?? 0)
             setAzimuthDeg(deg)
+             const cam: THREE.PerspectiveCamera = ctl.object
+             setZoom(cam.position.length())
           }}
         />
         <EffectComposer enableNormalPass={false}>
-          <DotScreen
-            blendFunction={theme === 'dark' ? BlendFunction.SCREEN : BlendFunction.MULTIPLY}
-            angle={Math.PI / 4}
-            scale={ditherScale}
-          />
-          <Noise premultiply opacity={(theme === 'dark' ? 0.1 : 0.08) * Math.min(1, ditherScale / 1.0)} />
+          {/* Noise removed per design request */}
           <Vignette eskil={false} offset={0.2} darkness={theme === 'dark' ? 0.5 : 0.35} />
         </EffectComposer>
       </Canvas>
@@ -255,7 +341,7 @@ export function Globe() {
           if (!ctl) return
           const cam: THREE.PerspectiveCamera = ctl.object
           const startPos = cam.position.clone()
-          const endPos = new THREE.Vector3(0.8, 0.3, 2.8)
+           const endPos = new THREE.Vector3(0.8, 0.3, 3.5)
           const startTarget = ctl.target.clone()
           const endTarget = new THREE.Vector3(0, 0, 0)
           const durationMs = 900
@@ -282,6 +368,71 @@ export function Globe() {
       >
         <MuteButton />
       </Compass>
+      {/* Zoom control (fixed bottom-right, with +/- buttons) */}
+      <div className="pointer-events-auto fixed right-4 bottom-4 z-50">
+        <div className="flex items-center gap-2 rounded-md border border-muted/60 bg-bg/80 px-3 py-2 shadow backdrop-blur">
+          <label className="mr-1 hidden text-[11px] opacity-80 md:block">Zoom</label>
+          <button
+            type="button"
+            aria-label="Zoom out"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-muted/50 text-fg hover:bg-muted/70"
+            onClick={() => {
+              const ctl = controlsRef.current
+              if (!ctl) return
+              const cam: THREE.PerspectiveCamera = ctl.object
+              const target = ctl.target as THREE.Vector3
+              const dir = new THREE.Vector3().subVectors(cam.position, target).normalize()
+              const dist = Math.min(maxDist, zoom + 0.2)
+              cam.position.copy(dir.multiplyScalar(dist).add(target))
+              cam.updateProjectionMatrix()
+              ctl.update()
+              setZoom(dist)
+            }}
+          >
+            −
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.001}
+            value={toSlider(zoom)}
+            onChange={(e) => {
+              const ctl = controlsRef.current
+              if (!ctl) return
+              const cam: THREE.PerspectiveCamera = ctl.object
+              const target = ctl.target as THREE.Vector3
+              const dir = new THREE.Vector3().subVectors(cam.position, target).normalize()
+              const dist = fromSlider(parseFloat(e.target.value))
+              cam.position.copy(dir.multiplyScalar(dist).add(target))
+              cam.updateProjectionMatrix()
+              ctl.update()
+              setZoom(dist)
+            }}
+            aria-label="Zoom"
+            className="h-2 w-40"
+          />
+          <button
+            type="button"
+            aria-label="Zoom in"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-muted/50 text-fg hover:bg-muted/70"
+            onClick={() => {
+              const ctl = controlsRef.current
+              if (!ctl) return
+              const cam: THREE.PerspectiveCamera = ctl.object
+              const target = ctl.target as THREE.Vector3
+              const dir = new THREE.Vector3().subVectors(cam.position, target).normalize()
+              const dist = Math.max(minDist, zoom - 0.2)
+              cam.position.copy(dir.multiplyScalar(dist).add(target))
+              cam.updateProjectionMatrix()
+              ctl.update()
+              setZoom(dist)
+            }}
+          >
+            +
+          </button>
+        </div>
+      </div>
       <Tooltip
         visible={tooltip.visible && !!tooltip.content}
         x={tooltip.x}
@@ -324,8 +475,9 @@ function AnimateTo({ lat, lng, onDone, controlsRef }: { lat: number; lng: number
     if (!ctl) return
     const cam: THREE.PerspectiveCamera = ctl.object
     const startPos = cam.position.clone()
-    // Face the target by rotating the camera around origin so the given lat/lng is centered
-    const targetVec = latLngToVector3(lat, lng, 2.8)
+    // Preserve current zoom (camera distance) while rotating to face the target
+    const currentDistance = cam.position.length()
+    const targetVec = latLngToVector3(lat, lng, currentDistance)
     const endPos = targetVec
     const startTarget = ctl.target.clone()
     const endTarget = new THREE.Vector3(0, 0, 0)

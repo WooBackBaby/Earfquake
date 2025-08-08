@@ -4,18 +4,20 @@
 
 @layer base {
   :root {
-    --bg: 0 0% 100%;
-    --fg: 222.2 84% 4.9%;
-    --accent: 221.2 83.2% 53.3%;
-    --muted: 210 40% 96.1%;
+    /* Light theme – modern, accessible palette */
+    --bg: 210 14% 97%;       /* slightly darker to reduce glare */
+    --fg: 222 47% 11%;       /* slate-900 */
+    --accent: 224 87% 56%;   /* refined brand blue */
+    --muted: 215 22% 88%;    /* subtle gray for panels */
     --dither-dark: 0 0% 0%;
     --dither-light: 0 0% 100%;
   }
   .dark {
-    --bg: 222.2 84% 4.9%;
-    --fg: 210 40% 98%;
-    --accent: 197 89% 60%;
-    --muted: 215.4 16.3% 24%;
+    /* Dark theme – high-contrast but calm */
+    --bg: 222 40% 6%;        /* deep slate */
+    --fg: 210 40% 96%;       /* near-white */
+    --accent: 199 89% 58%;   /* bright cyan-blue */
+    --muted: 216 22% 20%;    /* panel surface */
     --dither-dark: 0 0% 100%;
     --dither-light: 0 0% 0%;
   }
