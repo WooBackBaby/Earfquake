@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: 0 0% 100%;
+    --fg: 222.2 84% 4.9%;
+    --accent: 221.2 83.2% 53.3%;
+    --muted: 210 40% 96.1%;
+    --dither-dark: 0 0% 0%;
+    --dither-light: 0 0% 100%;
+  }
+  .dark {
+    --bg: 222.2 84% 4.9%;
+    --fg: 210 40% 98%;
+    --accent: 197 89% 60%;
+    --muted: 215.4 16.3% 24%;
+    --dither-dark: 0 0% 100%;
+    --dither-light: 0 0% 0%;
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg text-fg antialiased;
+    font-size: theme('fontSize.body');
+    background-color: hsl(var(--bg));
+    color: hsl(var(--fg));
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-size: theme('fontSize.heading');
+  }
+}
